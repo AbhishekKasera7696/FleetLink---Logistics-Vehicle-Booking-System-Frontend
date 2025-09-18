@@ -1,70 +1,198 @@
-# Getting Started with Create React App
+# FleetLink
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+**FleetLink** is a lightweight logistics vehicle booking system implemented with a React frontend and an Express + MongoDB (Mongoose) backend. It lets operators add vehicles, search for available vehicles for a requested time window and capacity, and create bookings while preventing overlapping reservations.
 
-## Available Scripts
+---
 
-In the project directory, you can run:
+## Quick elevator pitch (how to explain it to someone)
 
-### `npm start`
+FleetLink is a simple booking platform for logistics operators. Imagine a small fleet operator who wants to list trucks, then let customers search for trucks by required capacity, origin/destination pincode and start time. The system returns only vehicles that have enough capacity and are not already booked for the requested time window. If a vehicle is free, a booking can be created with a start and calculated end time.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Technically, the app uses:
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+* A React UI for adding vehicles and searching/booking them.
+* An Express REST API that serves vehicle and booking endpoints.
+* MongoDB for persistence with two Mongoose models: `Vehicle` and `Booking`.
 
-### `npm test`
+---
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Features
 
-### `npm run build`
+* Add vehicles (name, capacity in KG, number of tyres).
+* Search available vehicles by capacity, from/to pincodes and start time.
+* Basic booking flow with conflict detection (prevents overlapping bookings for the same vehicle).
+* Simple duration heuristic (derived from numeric pincodes) to estimate ride duration and end time.
+* Basic unit tests using Jest + Supertest (mocks Mongoose models).
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+---
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## Project structure (high level)
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```
+root
+├─ server.js                # Express app, route registration, MongoDB connection
+├─ models/
+│  ├─ Vehicle.js            # Vehicle schema
+│  └─ Booking.js            # Booking schema
+├─ controllers/
+│  ├─ vehicleController.js  # addVehicle, getAvailableVehicles
+│  └─ bookingController.js  # bookVehicle
+├─ routes/
+│  ├─ vehicles.js           # /api/vehicles
+│  └─ bookings.js           # /api/bookings
+├─ client/ (React app)
+│  ├─ components/
+│  │  ├─ AddVehicle.jsx
+│  │  └─ SearchAndBook.jsx
+│  └─ App.jsx
+└─ tests/                   # Jest + Supertest tests (mocks models)
+```
 
-### `npm run eject`
+---
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## Data models
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### Vehicle
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+```js
+{ name: String, capacityKg: Number, tyres: Number }
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### Booking
 
-## Learn More
+```js
+{ vehicleId: ObjectId (ref Vehicle), fromPincode: String, toPincode: String, startTime: Date, endTime: Date, customerId: String }
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+Notes:
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+* `endTime` is computed server-side using a simple heuristic based on numeric difference between `fromPincode` and `toPincode` (mod 24 hours). This is intentionally simple for demonstration — swap with a real distance/duration calculation in production.
 
-### Code Splitting
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## How it works (request flow)
 
-### Analyzing the Bundle Size
+1. Client adds vehicles via `POST /api/vehicles` (name, capacityKg, tyres).
+2. To find vehicles, client calls `GET /api/vehicles/available?capacityRequired=...&fromPincode=...&toPincode=...&startTime=...`.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+   * Server validates query params, computes `estimatedRideDurationHours`, `endTime`, queries vehicles with `capacityKg >= capacityRequired`, and filters out those with an overlapping `Booking` (where booking.start < end && booking.end > start).
+3. Client picks a vehicle and requests `POST /api/bookings` with `vehicleId, fromPincode, toPincode, startTime, customerId`.
 
-### Making a Progressive Web App
+   * Server recalculates `endTime`, checks for overlapping bookings, and, if clear, stores the booking.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+---
 
-### Advanced Configuration
+## API endpoints
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+### POST /api/vehicles
 
-### Deployment
+Add a vehicle.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+**Request body** (JSON):
 
-### `npm run build` fails to minify
+```json
+{ "name": "Truck A", "capacityKg": 1000, "tyres": 6 }
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+**Responses**
+
+* `201` created: returns the created vehicle object
+* `400` validation error
+* `500` server error
+
+---
+
+### GET /api/vehicles/available
+
+Search vehicles.
+
+**Query parameters** (all required):
+
+* `capacityRequired` (number)
+* `fromPincode` (string)
+* `toPincode` (string)
+* `startTime` (ISO string)
+
+**Response**
+
+* `200`: array of vehicle objects with an added `estimatedRideDurationHours` field
+* `400`, `500` as needed
+
+**Example**
+
+```
+GET /api/vehicles/available?capacityRequired=230&fromPincode=211011&toPincode=211001&startTime=2025-09-18T01:19:00.000Z
+```
+
+---
+
+### POST /api/bookings
+
+Create a booking.
+
+**Request body** (JSON):
+
+```json
+{
+  "vehicleId": "<vehicleId>",
+  "fromPincode": "211011",
+  "toPincode": "211001",
+  "startTime": "2025-09-18T01:19:00.000Z",
+  "customerId": "customer1"
+}
+```
+
+**Responses**
+
+* `201` booking created
+* `409` conflict — vehicle already booked for the requested time
+* `400` validation error
+* `500` server error
+
+---
+
+## Setup & run (development)
+
+1. Clone repo
+2. Install server deps: `npm install`
+3. Install client deps: `cd client && npm install` (if client in separate folder)
+4. Create `.env` with:
+
+```
+MONGODB_URI=mongodb://127.0.0.1:27017/fleetlink
+PORT=5000
+```
+
+5. Start MongoDB locally or use a cloud MongoDB connection string.
+6. Start server: `npm run dev` or `node server.js` (adjust script name as project uses)
+7. Start frontend: `cd client && npm start`
+8. Open `http://localhost:3000` (or wherever client is served)
+
+---
+
+## Running tests
+
+Tests use Jest + Supertest and mock Mongoose models. Run:
+
+```
+npm test
+```
+
+Because models are mocked, these tests run without a real database.
+
+---
+
+## Common issues & troubleshooting
+
+* **`Booking is not defined` / ReferenceError**: You must `require('../models/Booking')` inside `controllers/vehicleController.js`. (This was a real bug during development.)
+
+* **`MongooseError: The 'uri' parameter to 'openUri()' must be a string, got "undefined"`**: Your `MONGODB_URI` env var is missing. Add it to `.env` or use the fallback in `server.js`.
+
+* **500 Internal Server Error on /api/vehicles/available**: Check server console logs for the stack. Add `console.error(err.stack)` in catch blocks while debugging.
+
+* **Invalid date / parsing issues**: Ensure `startTime` query and body values are valid ISO date strings (use `new Date(...).toISOString()` on the client before sending).
+
+* **Estimated duration is 0**: The current heuristic uses `Math.abs(parseInt(toPincode) - parseInt(fromPincode)) % 24`. If pincodes are non-numeric or equal, this may return `0` — consider using a minimum duration of 1 hour for realistic behavior.
+
+---
+
